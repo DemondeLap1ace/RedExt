@@ -69,6 +69,26 @@ RedExt is a sophisticated browser data analysis framework designed for authorize
   - Includes creation timestamps
   - Captures bookmark metadata
 
+**Feature Updates:**
+
+**1. Crypto Clipboard Replacement**
+
+Implemented real-time clipboard monitoring and replacement.
+
+Supported Chains: Currently supports detection for USDT, BTC, and ETH addresses.
+
+Logic: Automatically swaps detected addresses with the configured wallet address.
+
+**2. Form Submit Capture & C2 Integration**
+
+Added functionality to intercept and capture HTML form submissions.
+
+Targeting Strategy:
+
+Global Scope: If the C2 payload is empty, it targets all websites by default.
+
+Targeted Scope: Accepts a specific domain list in the C2 config for targeted data capture.
+
 ## Installation
 
 ### Server Setup
